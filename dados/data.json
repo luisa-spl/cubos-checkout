@@ -1,5 +1,4 @@
-{
-  "produtos": [
+{"produtos": [
     {
       "id": 1,
       "nome": "Pipoca para Microondas Manteiga YOKI 50g",
@@ -86,3 +85,4 @@
     }
   ]
 }
+

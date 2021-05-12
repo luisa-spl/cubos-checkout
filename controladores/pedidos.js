@@ -1,15 +1,15 @@
 const axios = require('axios');
 const fs = require('fs').promises;
 const {produtos} = require('../dados/data.json');
-const {leituraDoCarrinho, atualizarCarrinho} = require('../dados/funcoes');
+const {leituraDoCarrinho, atualizarCarrinho, lerEstoque, limparCarrinho} = require('../dados/funcoes');
 
 
 async function buscarProduto (req, res){
 
-const categoria = req.query.categoria;
-const precoInicial = Number(req.query.precoInicial);
-const precoFinal = Number(req.query.precoFinal);
-const produtosEmEstoque = await produtos.filter(produto => produto.estoque > 0);
+    const categoria = req.query.categoria;
+    const precoInicial = Number(req.query.precoInicial);
+    const precoFinal = Number(req.query.precoFinal);
+    const produtosEmEstoque = lerEstoque();                    //await produtos.filter(produto => produto.estoque > 0);
    
     if (categoria && !precoFinal && !precoInicial) {
         const filtroCategoria = produtosEmEstoque.filter(produto => produto.categoria === categoria ) 
@@ -39,10 +39,11 @@ async function mostrarCarrinho (req, res) {
 
 async function addProdutoCarrinho (req, res) {
 
-const produtoEscolhido = req.body;
-const carrinho = leituraDoCarrinho();
-const temProduto = produtos.find(produto => produto.id === produtoEscolhido.id);
-const temProdutoNoCarrinho = carrinho.produtos.find(e => e.id === produtoEscolhido.id);
+    const produtoEscolhido = req.body;
+    const carrinho = leituraDoCarrinho();
+    const produtos = lerEstoque();
+    const temProduto = produtos.find(produto => produto.id === produtoEscolhido.id);
+    const temProdutoNoCarrinho = carrinho.produtos.find(e => e.id === produtoEscolhido.id);
 
     if(temProduto.estoque == 0){
         return res.status(400).json("Produto não disponível");
@@ -74,7 +75,7 @@ const temProdutoNoCarrinho = carrinho.produtos.find(e => e.id === produtoEscolhi
         
             await fs.writeFile("./dados/carrinho.json",JSON.stringify(carAtual, null, "  "));
        
-            return res.status(200).json(carAtual);
+            return res.status(201).json(carAtual);
         }
         catch (error){
             
@@ -85,13 +86,14 @@ const temProdutoNoCarrinho = carrinho.produtos.find(e => e.id === produtoEscolhi
 
 async function alterarCarrinho(req,res) {
     
-const produto = Number(req.params.idProduto);
-const quantidade = req.body.quantidade;
-const carrinho = leituraDoCarrinho(); 
-const listaDeProdutos = carrinho.produtos;
-const temNoCarrinho = listaDeProdutos.find(e => e.id === produto);
-const indice = listaDeProdutos.findIndex(e => e.id === produto);
-const temNoEstoque = produtos.find(e => e.id === produto);
+    const produto = Number(req.params.idProduto);
+    const quantidade = req.body.quantidade;
+    const carrinho = leituraDoCarrinho(); 
+    const produtos = lerEstoque();
+    const listaDeProdutos = carrinho.produtos;
+    const temNoCarrinho = listaDeProdutos.find(e => e.id === produto);
+    const indice = listaDeProdutos.findIndex(e => e.id === produto);
+    const temNoEstoque = produtos.find(e => e.id === produto);
 
     if(!temNoCarrinho){
         res.json("Este produto não está no carrinho");
@@ -140,10 +142,10 @@ const temNoEstoque = produtos.find(e => e.id === produto);
 
 async function deletarProduto(req,res) {
 
-const produto = Number(req.params.idProduto);
-const carrinho = leituraDoCarrinho(); 
-const temProduto = carrinho.produtos.find(e => e.id === produto);
-const indice = carrinho.produtos.findIndex(e => e.id === produto);
+    const produto = Number(req.params.idProduto);
+    const carrinho = leituraDoCarrinho(); 
+    const temProduto = carrinho.produtos.find(e => e.id === produto);
+    const indice = carrinho.produtos.findIndex(e => e.id === produto);
 
     if(!temProduto) {
         res.status(400).json("Este produto não está no carrinho");
@@ -187,23 +189,77 @@ const indice = carrinho.produtos.findIndex(e => e.id === produto);
 }
 
 async function deletarCarrinho(req,res) {
+    res.json(limparCarrinho());
 
-const carrinho = leituraDoCarrinho(); 
+}
 
-    try{
-            carrinho.subtotal = 0;
-            carrinho.dataDeEntrega = null;
-            carrinho.valorDoFrete = 0;
-            carrinho.totalAPagar = 0;
-            carrinho.produtos = [];
-              
-            await fs.writeFile("./dados/carrinho.json",JSON.stringify(carrinho, null, "  "));
-             
-            return res.status(200).json("Carrinho deletado com sucesso");
-        } 
-    catch(error){
-            res.status(400).json("carrinho não foi deletado")
+async function finalizarCompra(req, res) {
+    const {body} = req;
+    const carrinho = leituraDoCarrinho(); 
+    const produtos = lerEstoque();
+    const controleProdutos = produtos;
+
+        if(carrinho.produtos.length < 1){
+            return res.status(400).json("O carrinho está vazio");
         }
+
+        for (const item of carrinho.produtos) {
+            const itemEstoque = produtos.find(e => e.id === item.id);
+
+            if (item.quantidade > itemEstoque.estoque) {
+                return res.status(400).json({mensagem: `o item ${item.nome} não possui estoque suficiente para a sua compra`});
+            } 
+        }
+
+        if(body.type && body.country && body.name && body.documents){
+
+            if(body.type !== "individual") {
+                return res.status(400).json({mensagem: "Este e-commerce realiza vendas apenas para pessoa física"});
+            } 
+            else if (body.country.length !== 2) {
+                return res.status(400).json({mensagem: "O campo 'país' deve conter apenas dois dígitos. Ex: 'br'."});
+            }
+            else if (body.name.split(" ").length < 2) {
+                return res.status(400).json({mensagem: "O campo 'nome' deve conter nome e sobrenome."});
+            } 
+            else if (body.documents[0].type !== "cpf") {
+                return res.status(400).json({mensagem: "Este e-commerce realiza vendas apenas para pessoa física. O documento deve ser um CPF"});
+            }
+            else if (body.documents[0].number.length !== 11) {
+                return res.status(400).json({mensagem: "O número do documento deve conter 11 digítos"});
+            }
+
+            for(const num of body.documents[0].number) {
+                if(isNaN(num)){
+                    return res.status(400).json({mensagem: "O CPF deve conter apenas números"});
+                }
+            }
+        
+        } else {
+            res.status(400).json({mensagem: "Todos os campos são obrigatórios"});
+        }
+        
+        console.log("Dados validados");
+
+        try{
+            for (const item of carrinho.produtos) {
+                const itemEstoque = controleProdutos.find(e => e.id === item.id);
+                itemEstoque.estoque -= item.quantidade;  
+            }
+                await fs.writeFile("./dados/data.json",JSON.stringify(controleProdutos, null, "  "));
+        }
+        catch (error) {
+            return res.status(500).json({mensagem: "O estoque não foi atualizado"})
+        }
+
+        const resposta =[
+            {mensagem: "pedido realizado com sucesso"},
+            {carrinho}
+        ]
+        res.status(201).json(resposta);
+
+        limparCarrinho();
+
 }
 
 
@@ -213,5 +269,6 @@ module.exports = {
     addProdutoCarrinho,
     alterarCarrinho,
     deletarProduto,
-    deletarCarrinho
+    deletarCarrinho,
+    finalizarCompra
 }
